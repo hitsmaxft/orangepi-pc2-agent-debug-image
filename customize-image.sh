@@ -63,7 +63,9 @@ done
 # Armbian uses systemd-resolved's stub path. The build container has no
 # systemd-resolved, so provide its DNS file at the path used by the chroot.
 mkdir -p "$WORKDIR/root/run/systemd/resolve"
-cp /etc/resolv.conf "$WORKDIR/root/run/systemd/resolve/stub-resolv.conf"
+if ! cmp -s /etc/resolv.conf "$WORKDIR/root/run/systemd/resolve/stub-resolv.conf"; then
+    cp /etc/resolv.conf "$WORKDIR/root/run/systemd/resolve/stub-resolv.conf"
+fi
 
 install -m 0755 /bin/true "$WORKDIR/root/usr/sbin/policy-rc.d"
 cat >"$WORKDIR/root/usr/sbin/policy-rc.d" <<'EOF'
