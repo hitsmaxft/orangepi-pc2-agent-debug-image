@@ -1,0 +1,7 @@
+# Copy to .envrc and run: direnv allow
+export SSH_PUBLIC_KEY_FILE="${HOME}/.ssh/id_ed25519.pub"
+export OUTPUT_DIR="$PWD/output"
+
+# Optional build overrides. Defaults live in image.conf.
+# export IMAGE_SIZE=6G
+# export TARGET_HOSTNAME=opi-pc2-debug

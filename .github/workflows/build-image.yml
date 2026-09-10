@@ -1,0 +1,61 @@
+name: Build Armbian debug image
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Decode authorized public key
+        shell: bash
+        env:
+          SSH_PUBLIC_KEY_B64: ${{ secrets.SSH_PUBLIC_KEY_B64 }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$SSH_PUBLIC_KEY_B64" || {
+            echo "Repository secret SSH_PUBLIC_KEY_B64 is required" >&2
+            exit 1
+          }
+          printf '%s' "$SSH_PUBLIC_KEY_B64" | base64 --decode >"$RUNNER_TEMP/authorized_key.pub"
+          ssh-keygen -l -f "$RUNNER_TEMP/authorized_key.pub"
+
+      - name: Install image build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl e2fsprogs fdisk openssh-client parted util-linux xz-utils zerofree
+
+      - name: Build, verify, and compress
+        env:
+          SSH_PUBLIC_KEY_FILE: ${{ runner.temp }}/authorized_key.pub
+        run: sudo -E ./build-linux.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orangepi-pc2-agent-debug-image
+          path: |
+            output/*-usb-debug.img.xz
+            output/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            output/*-usb-debug.img.xz output/SHA256SUMS \
+            --generate-notes --title "$GITHUB_REF_NAME"

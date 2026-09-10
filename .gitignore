@@ -1,0 +1,9 @@
+.DS_Store
+.direnv/
+.envrc
+authorized_key.pub
+output/
+*.img
+*.img.xz
+*.img.xz.sha
+SHA256SUMS-custom

@@ -1,0 +1,138 @@
+#!/bin/sh
+# Agent-oriented, read-only inventory for the Orange Pi PC 2 debug image.
+set -u
+
+PACKAGES_FILE=/usr/share/pi-debug-image/packages.txt
+MODE=${1:-all}
+
+heading() {
+    printf '\n[%s]\n' "$1"
+}
+
+emit_identity() {
+    . /etc/os-release
+    heading identity
+    printf 'image_role=ai-native embedded USB/Bluetooth debug host\n'
+    printf 'hostname=%s\n' "$(hostname 2>/dev/null || printf unknown)"
+    printf 'os=%s\n' "${PRETTY_NAME:-unknown}"
+    printf 'kernel=%s\n' "$(uname -r)"
+    printf 'architecture=%s\n' "$(uname -m)"
+    printf 'uptime=%s\n' "$(uptime -p 2>/dev/null || printf unknown)"
+    printf 'user=%s\n' "$(id -un)"
+    printf 'groups=%s\n' "$(id -Gn)"
+    printf 'rootfs=%s\n' "$(findmnt -n -o SOURCE,FSTYPE,SIZE,AVAIL,USE% / 2>/dev/null || printf unknown)"
+    printf 'network_addresses=%s\n' "$(hostname -I 2>/dev/null | sed 's/[[:space:]]*$//' || printf unknown)"
+}
+
+emit_runtime() {
+    heading runtimes
+    printf 'system_python=%s\n' "$(python3 --version 2>&1 || printf missing)"
+    printf 'managed_python=%s\n' "$(python3.14 --version 2>&1 || printf missing)"
+    printf 'uv=%s\n' "$(uv --version 2>&1 || printf missing)"
+    printf 'gcc=%s\n' "$(gcc --version 2>/dev/null | head -n 1 || printf missing)"
+    printf 'clang=%s\n' "$(clang --version 2>/dev/null | head -n 1 || printf missing)"
+    printf 'cmake=%s\n' "$(cmake --version 2>/dev/null | head -n 1 || printf missing)"
+    printf 'openocd=%s\n' "$(openocd --version 2>&1 | head -n 1 || printf missing)"
+    printf 'tshark=%s\n' "$(tshark --version 2>/dev/null | head -n 1 || printf missing)"
+}
+
+emit_services() {
+    heading services
+    for service in ssh bluetooth avahi-daemon ser2net; do
+        state=$(systemctl is-active "$service" 2>/dev/null || true)
+        enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+        printf '%s\tactive=%s\tenabled=%s\n' "$service" "${state:-unknown}" "${enabled:-unknown}"
+    done
+}
+
+emit_hardware() {
+    heading hardware_snapshot
+    printf 'usb_capability=USB 2.0 full/high speed; no USB 3.x SuperSpeed\n'
+    printf 'usb_topology_begin\n'
+    lsusb -t 2>&1 || true
+    printf 'usb_topology_end\n'
+    printf 'bluetooth_controllers_begin\n'
+    timeout 3 bluetoothctl list 2>&1 || true
+    printf 'bluetooth_controllers_end\n'
+    printf 'note=Orange Pi PC 2 has no onboard Bluetooth; HCI/RF work needs external hardware.\n'
+}
+
+emit_packages() {
+    heading installed_debug_packages
+    printf 'package\tversion\tstatus\n'
+    if [ ! -r "$PACKAGES_FILE" ]; then
+        printf 'ERROR\tpackage manifest missing: %s\tmissing\n' "$PACKAGES_FILE"
+        return
+    fi
+    while IFS= read -r package; do
+        case "$package" in ''|'#'*) continue ;; esac
+        version=$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)
+        if [ -n "$version" ]; then
+            printf '%s\t%s\tinstalled\n' "$package" "$version"
+        else
+            printf '%s\t-\tMISSING\n' "$package"
+        fi
+    done <"$PACKAGES_FILE"
+}
+
+emit_workflows() {
+    heading common_workflows
+    cat <<'EOF'
+USB_ENUMERATION=lsusb -t; lsusb -v -d VID:PID; sudo dmesg -w
+USB_CAPTURE=tshark -D | grep usbmon; sudo tshark -i usbmon1 -w usb-trace.pcapng
+USB_THROUGHPUT=sudo usbtop
+HID_EVENTS=sudo evtest /dev/input/eventN
+SERIAL=picocom -b 115200 /dev/ttyACM0
+OPENOCD=openocd -f interface/PROBE.cfg -f target/TARGET.cfg
+BLUETOOTH_HCI=sudo btmon -w bluetooth-trace.btsnoop
+BLUETOOTH_CONTROL=bluetoothctl show
+UBERTOOTH=ubertooth-util -v; ubertooth-btle -f
+PYTHON_PROJECT=uv venv --python 3.14; source .venv/bin/activate
+EOF
+
+    heading agent_evidence_contract
+    cat <<'EOF'
+1. Record date, hostname, uname -a, image/tool versions, target VID:PID, cable/port, and power topology.
+2. Preserve raw dmesg, lsusb -t/-v, usbmon pcapng, btmon btsnoop, and application logs before summarizing.
+3. A package/configuration check is not physical hardware validation.
+4. USB enumeration is not transfer integrity or latency proof; identify 12M versus 480M explicitly.
+5. btmon is host-controller HCI evidence, not arbitrary over-the-air RF evidence.
+6. Keep RF capture, controller ACK, application receipt, USB/HID delivery, and host observation as separate gates.
+7. Never flash, reset, detach a kernel driver, or change power without identifying the exact target first.
+EOF
+
+    heading security
+    cat <<'EOF'
+ssh_user=debug
+ssh_authentication=public key only
+ssh_source_scope=loopback, RFC1918 IPv4, IPv6 ULA/link-local
+root_ssh=disabled
+sudo=debug has NOPASSWD ALL
+ssh_config=/etc/ssh/sshd_config.d/90-lan-public-key-only.conf
+EOF
+}
+
+case "$MODE" in
+    all)
+        printf 'PI_DEBUG_IMAGE_HELP_VERSION=1\n'
+        emit_identity
+        emit_runtime
+        emit_services
+        emit_hardware
+        emit_packages
+        emit_workflows
+        ;;
+    quick)
+        printf 'PI_DEBUG_IMAGE_HELP_VERSION=1\n'
+        emit_identity
+        emit_runtime
+        emit_services
+        emit_hardware
+        ;;
+    packages) emit_packages ;;
+    workflows) emit_workflows ;;
+    *)
+        printf 'usage: pi-help [all|quick|packages|workflows]\n' >&2
+        exit 2
+        ;;
+esac
